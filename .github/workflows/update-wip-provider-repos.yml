@@ -1,0 +1,106 @@
+name: Update GCP Workload Identity Provider Repos
+
+on:
+  workflow_dispatch:
+    inputs:
+      new_github_repo:
+        description: 'Full GitHub Repository Name to Add (e.g., your_username/your_new_repo)'
+        required: true
+        type: string
+      confirm_update:
+        description: 'Type "yes" to confirm the update (case-sensitive)'
+        required: true
+        type: string
+        default: 'no'
+
+env:
+  PROJECT_ID: alg-kubernetes-test # Your GCP Project ID
+  GCP_PROJECT_NUMBER: 673634375237 # Your GCP Project Number
+  GCP_SERVICE_ACCOUNT_NAME: github-actions-deployer # The SA used by your workflows
+  WIP_POOL_ID: github-pool # Your Workload Identity Pool ID
+  WIP_PROVIDER_ID: github-provider # Your Workload Identity Provider ID
+  GCP_LOCATION: global # Location of your WIP Pool and Provider
+
+jobs:
+  update-provider-condition:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write' # Required for Workload Identity Federation
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Validate Confirmation
+        run: |
+          if [[ "${{ github.event.inputs.confirm_update }}" != "yes" ]]; then
+            echo "::error::Update not confirmed. Please type 'yes' in the 'confirm_update' input field."
+            exit 1
+          fi
+        shell: bash
+
+      - name: Authenticate to Google Cloud
+        id: 'auth'
+        uses: 'google-github-actions/auth@v1'
+        with:
+          workload_identity_provider: 'projects/${{ env.GCP_PROJECT_NUMBER }}/locations/${{ env.GCP_LOCATION }}/workloadIdentityPools/${{ env.WIP_POOL_ID }}/providers/${{ env.WIP_PROVIDER_ID }}'
+          service_account: '${{ env.GCP_SERVICE_ACCOUNT_NAME }}@${{ env.PROJECT_ID }}.iam.gserviceaccount.com'
+
+      - name: Get Current Provider Condition
+        id: get_condition
+        run: |
+          CURRENT_CONDITION=$(gcloud iam workload-identity-pools providers describe ${{ env.WIP_PROVIDER_ID }} \
+            --workload-identity-pool=${{ env.WIP_POOL_ID }} \
+            --project=${{ env.PROJECT_ID }} \
+            --location=${{ env.GCP_LOCATION }} \
+            --format="value(attributeCondition)")
+          echo "Current attributeCondition: $CURRENT_CONDITION"
+          echo "current_condition=$CURRENT_CONDITION" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Construct New Provider Condition
+        id: construct_condition
+        run: |
+          CURRENT_CONDITION="${{ steps.get_condition.outputs.current_condition }}"
+          NEW_REPO_FULL_NAME="${{ github.event.inputs.new_github_repo }}"
+          NEW_REPO_CONDITION="attribute.repository == '$NEW_REPO_FULL_NAME'"
+          UPDATED_CONDITION=""
+
+          if [[ -z "$CURRENT_CONDITION" ]]; then
+            # This case should ideally not happen if the provider was set up correctly,
+            # but we handle it by setting the new repo as the sole condition.
+            UPDATED_CONDITION="$NEW_REPO_CONDITION"
+            echo "No existing condition found. Setting new condition: $UPDATED_CONDITION"
+          elif [[ "$CURRENT_CONDITION" == *"$NEW_REPO_CONDITION"* ]]; then
+            # New repo is already in the condition, no change needed
+            UPDATED_CONDITION="$CURRENT_CONDITION"
+            echo "Repository '$NEW_REPO_FULL_NAME' is already in the attributeCondition. No update performed."
+          else
+            # Append the new repo condition using ' || '
+            UPDATED_CONDITION="$CURRENT_CONDITION || $NEW_REPO_CONDITION"
+            echo "New attributeCondition will be: $UPDATED_CONDITION"
+          fi
+          echo "updated_condition=$UPDATED_CONDITION" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Update Workload Identity Provider
+        if: ${{ steps.construct_condition.outputs.updated_condition != steps.get_condition.outputs.current_condition }}
+        run: |
+          gcloud iam workload-identity-pools providers update ${{ env.WIP_PROVIDER_ID }} \
+            --workload-identity-pool=${{ env.WIP_POOL_ID }} \
+            --project=${{ env.PROJECT_ID }} \
+            --location=${{ env.GCP_LOCATION }} \
+            --attribute-condition="${{ steps.construct_condition.outputs.updated_condition }}"
+        shell: bash
+
+      - name: Verify Update
+        if: ${{ steps.construct_condition.outputs.updated_condition != steps.get_condition.outputs.current_condition }}
+        run: |
+          echo "Verifying updated provider configuration..."
+          gcloud iam workload-identity-pools providers describe ${{ env.WIP_PROVIDER_ID }} \
+            --workload-identity-pool=${{ env.WIP_POOL_ID }} \
+            --project=${{ env.PROJECT_ID }} \
+            --location=${{ env.GCP_LOCATION }} \
+            --format="value(attributeCondition)"
+        shell: bash
