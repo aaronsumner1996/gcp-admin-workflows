@@ -88,11 +88,11 @@ jobs:
       - name: Update Workload Identity Provider
         if: ${{ steps.construct_condition.outputs.updated_condition != steps.get_condition.outputs.current_condition }}
         run: |
-          gcloud iam workload-identity-pools providers update-oidc ${{ env.WIP_PROVIDER_ID }} \ # <--- CORRECTED COMMAND
-            --workload-identity-pool=${{ env.WIP_POOL_ID }} \
-            --project=${{ env.PROJECT_ID }} \
-            --location=${{ env.GCP_LOCATION }} \
-            --attribute-condition="${{ steps.construct_condition.outputs.updated_condition }}"
+          gcloud iam workload-identity-pools providers update-oidc ${{ env.WIP_PROVIDER_ID }} \
+          --workload-identity-pool=${{ env.WIP_POOL_ID }} \
+          --project=${{ env.PROJECT_ID }} \
+          --location=${{ env.GCP_LOCATION }} \
+          --attribute-condition="${{ steps.construct_condition.outputs.updated_condition }}"
         shell: bash
 
       - name: Verify Update
