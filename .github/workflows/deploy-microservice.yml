@@ -4,7 +4,7 @@
 name: Reusable Microservice Deployment
 
 on:
-  workflow_call: # This makes the workflow reusable
+  workflow_call:
     inputs:
       service_name:
         description: 'Name of the microservice (e.g., agl-rawg-adapter)'
@@ -34,6 +34,10 @@ on:
         description: 'Your Artifact Registry repository name'
         required: true
         type: string
+      artifact_registry_zone:
+        description: 'Zone/Location of your Artifact Registry repository'
+        required: true
+        type: string
       gcp_project_number:
         description: 'Your GCP Project Number (e.g., 673634375237)'
         required: true
@@ -43,20 +47,12 @@ on:
         required: true
         type: string
 
-    #secrets:
-    # No secrets needed here if Workload Identity Federation is used,
-    # as authentication happens via id-token.
-    # This section is kept for illustration if secrets were ever needed.
-    # GITHUB_TOKEN:
-    #   required: true
-
-
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     permissions:
       contents: 'read'
-      id-token: 'write' # Required for Workload Identity Federation
+      id-token: 'write'
 
     steps:
       - name: Checkout Repository
@@ -73,7 +69,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build with Gradle
-        run: ./gradlew clean assemble # Or 'build' if you want to run tests
+        run: ./gradlew clean assemble
 
       - name: Authenticate to Google Cloud
         id: 'auth'
@@ -83,30 +79,27 @@ jobs:
           service_account: '${{ inputs.gcp_service_account_name }}@${{ inputs.gcp_project_id }}.iam.gserviceaccount.com'
 
       - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ inputs.gke_zone }}-docker.pkg.dev
+        run: gcloud auth configure-docker ${{ inputs.artifact_registry_zone }}-docker.pkg.dev # <--- USE NEW INPUT
 
       - name: Build Docker Image
         run: |
-          docker build -t ${{ inputs.gke_zone }}-docker.pkg.dev/${{ inputs.gcp_project_id }}/${{ inputs.artifact_registry_repo }}/${{ inputs.image_name }}:${{ github.sha }} .
+          docker build -t ${{ inputs.artifact_registry_zone }}-docker.pkg.dev/${{ inputs.gcp_project_id }}/${{ inputs.artifact_registry_repo }}/${{ inputs.image_name }}:${{ github.sha }} . # <--- USE NEW INPUT
 
       - name: Push Docker Image to Artifact Registry
         run: |
-          docker push ${{ inputs.gke_zone }}-docker.pkg.dev/${{ inputs.gcp_project_id }}/${{ inputs.artifact_registry_repo }}/${{ inputs.image_name }}:${{ github.sha }}
+          docker push ${{ inputs.artifact_registry_zone }}-docker.pkg.dev/${{ inputs.gcp_project_id }}/${{ inputs.artifact_registry_repo }}/${{ inputs.image_name }}:${{ github.sha }} # <--- USE NEW INPUT
 
       - name: Get GKE Credentials
         uses: google-github-actions/get-gke-credentials@v1
         with:
           cluster_name: ${{ inputs.gke_cluster_name }}
           location: ${{ inputs.gke_zone }}
-          project_id: ${{ inputs.gcp_project_id }} # Explicitly pass project_id for clarity
+          project_id: ${{ inputs.gcp_project_id }}
 
       - name: Update Kubernetes Deployment Image
         run: |
-          # This sed command updates the image tag in your K8s manifest.
-          # It assumes your image line in the K8s manifest looks like:
-          # image: europe-west1-docker.pkg.dev/your-project-id/your-repo/your-image:some-old-tag
-          # and replaces 'some-old-tag' or any existing tag with the new IMAGE_TAG (github.sha).
-          sed -i "s|image: ${{ inputs.gke_zone }}-docker.pkg.dev/${{ inputs.gcp_project_id }}/${{ inputs.artifact_registry_repo }}/${{ inputs.image_name }}:.*|image: ${{ inputs.gke_zone }}-docker.pkg.dev/${{ inputs.gcp_project_id }}/${{ inputs.artifact_registry_repo }}/${{ inputs.image_name }}:${{ github.sha }}|" ${{ inputs.k8s_deployment_file_path }}
+          # The sed command also needs to use the correct AR zone for the image path
+          sed -i "s|image: ${{ inputs.artifact_registry_zone }}-docker.pkg.dev/${{ inputs.gcp_project_id }}/${{ inputs.artifact_registry_repo }}/${{ inputs.image_name }}:.*|image: ${{ inputs.artifact_registry_zone }}-docker.pkg.dev/${{ inputs.gcp_project_id }}/${{ inputs.artifact_registry_repo }}/${{ inputs.image_name }}:${{ github.sha }}|" ${{ inputs.k8s_deployment_file_path }} # <--- USE NEW INPUT
 
       - name: Deploy to GKE
         run: |
