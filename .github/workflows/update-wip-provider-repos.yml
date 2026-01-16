@@ -46,6 +46,7 @@ jobs:
         with:
           workload_identity_provider: 'projects/${{ env.GCP_PROJECT_NUMBER }}/locations/${{ env.GCP_LOCATION }}/workloadIdentityPools/${{ env.WIP_POOL_ID }}/providers/${{ env.WIP_PROVIDER_ID }}'
           service_account: '${{ env.GCP_SERVICE_ACCOUNT_NAME }}@${{ env.PROJECT_ID }}.iam.gserviceaccount.com'
+          project_id: ${{ env.PROJECT_ID }} # <--- Added for robustness
 
       - name: Get Current Provider Condition
         id: get_condition
@@ -87,7 +88,7 @@ jobs:
       - name: Update Workload Identity Provider
         if: ${{ steps.construct_condition.outputs.updated_condition != steps.get_condition.outputs.current_condition }}
         run: |
-          gcloud iam workload-identity-pools providers update ${{ env.WIP_PROVIDER_ID }} \
+          gcloud iam workload-identity-pools providers update-oidc ${{ env.WIP_PROVIDER_ID }} \ # <--- CORRECTED COMMAND
             --workload-identity-pool=${{ env.WIP_POOL_ID }} \
             --project=${{ env.PROJECT_ID }} \
             --location=${{ env.GCP_LOCATION }} \
