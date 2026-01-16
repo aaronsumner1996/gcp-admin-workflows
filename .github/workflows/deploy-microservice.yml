@@ -1,0 +1,119 @@
+# File: .github/workflows/deploy-microservice.yml
+# This is a reusable workflow that other repositories will call.
+
+name: Reusable Microservice Deployment
+
+on:
+  workflow_call: # This makes the workflow reusable
+    inputs:
+      service_name:
+        description: 'Name of the microservice (e.g., agl-rawg-adapter)'
+        required: true
+        type: string
+      image_name:
+        description: 'Name of the Docker image (e.g., agl-rawg-adapter)'
+        required: true
+        type: string
+      k8s_deployment_file_path:
+        description: 'Path to the Kubernetes manifest file (e.g., K8sGcp/k8s.yaml)'
+        required: true
+        type: string
+      gcp_project_id:
+        description: 'Your GCP Project ID'
+        required: true
+        type: string
+      gke_cluster_name:
+        description: 'Name of your GKE cluster'
+        required: true
+        type: string
+      gke_zone:
+        description: 'Zone/Location of your GKE cluster'
+        required: true
+        type: string
+      artifact_registry_repo:
+        description: 'Your Artifact Registry repository name'
+        required: true
+        type: string
+      gcp_project_number:
+        description: 'Your GCP Project Number (e.g., 673634375237)'
+        required: true
+        type: string
+      gcp_service_account_name:
+        description: 'GCP Service Account name for GitHub Actions (e.g., github-actions-deployer)'
+        required: true
+        type: string
+
+    secrets:
+    # No secrets needed here if Workload Identity Federation is used,
+    # as authentication happens via id-token.
+    # This section is kept for illustration if secrets were ever needed.
+    # GITHUB_TOKEN:
+    #   required: true
+
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write' # Required for Workload Identity Federation
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build with Gradle
+        run: ./gradlew clean assemble # Or 'build' if you want to run tests
+
+      - name: Authenticate to Google Cloud
+        id: 'auth'
+        uses: 'google-github-actions/auth@v1'
+        with:
+          workload_identity_provider: 'projects/${{ inputs.gcp_project_number }}/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
+          service_account: '${{ inputs.gcp_service_account_name }}@${{ inputs.gcp_project_id }}.iam.gserviceaccount.com'
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ inputs.gke_zone }}-docker.pkg.dev
+
+      - name: Build Docker Image
+        run: |
+          docker build -t ${{ inputs.gke_zone }}-docker.pkg.dev/${{ inputs.gcp_project_id }}/${{ inputs.artifact_registry_repo }}/${{ inputs.image_name }}:${{ github.sha }} .
+
+      - name: Push Docker Image to Artifact Registry
+        run: |
+          docker push ${{ inputs.gke_zone }}-docker.pkg.dev/${{ inputs.gcp_project_id }}/${{ inputs.artifact_registry_repo }}/${{ inputs.image_name }}:${{ github.sha }}
+
+      - name: Get GKE Credentials
+        uses: google-github-actions/get-gke-credentials@v1
+        with:
+          cluster_name: ${{ inputs.gke_cluster_name }}
+          location: ${{ inputs.gke_zone }}
+          project_id: ${{ inputs.gcp_project_id }} # Explicitly pass project_id for clarity
+
+      - name: Update Kubernetes Deployment Image
+        run: |
+          # This sed command updates the image tag in your K8s manifest.
+          # It assumes your image line in the K8s manifest looks like:
+          # image: europe-west1-docker.pkg.dev/your-project-id/your-repo/your-image:some-old-tag
+          # and replaces 'some-old-tag' or any existing tag with the new IMAGE_TAG (github.sha).
+          sed -i "s|image: ${{ inputs.gke_zone }}-docker.pkg.dev/${{ inputs.gcp_project_id }}/${{ inputs.artifact_registry_repo }}/${{ inputs.image_name }}:.*|image: ${{ inputs.gke_zone }}-docker.pkg.dev/${{ inputs.gcp_project_id }}/${{ inputs.artifact_registry_repo }}/${{ inputs.image_name }}:${{ github.sha }}|" ${{ inputs.k8s_deployment_file_path }}
+
+      - name: Deploy to GKE
+        run: |
+          kubectl apply -f ${{ inputs.k8s_deployment_file_path }}
+
+      - name: Verify Deployment Rollout
+        run: |
+          kubectl rollout status deployment/${{ inputs.image_name }}-deployment
+          echo "Deployment rollout status checked. Service details:"
+          kubectl get service ${{ inputs.image_name }}-service
