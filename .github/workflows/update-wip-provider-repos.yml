@@ -105,11 +105,11 @@ jobs:
         shell: bash
 
       - name: Grant Workload Identity User Role to New Repository
-        # This step runs only if the attributeCondition was actually updated (meaning a new repo was added)
-        if: ${{ steps.construct_condition.outputs.updated_condition != steps.get_condition.outputs.current_condition }}
+        # This step will now always attempt to grant the role for the new_github_repo.
+        # It's idempotent, so it won't create duplicates if the binding already exists.
         run: |
           NEW_REPO_FULL_NAME="${{ github.event.inputs.new_github_repo }}"
-          echo "Granting Workload Identity User role for repository: $NEW_REPO_FULL_NAME"
+          echo "Ensuring Workload Identity User role is granted for repository: $NEW_REPO_FULL_NAME"
           gcloud iam service-accounts add-iam-policy-binding \
             "${{ env.GCP_SERVICE_ACCOUNT_NAME }}@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
             --role="roles/iam.workloadIdentityUser" \
@@ -118,7 +118,7 @@ jobs:
         shell: bash
 
       - name: Verify Service Account IAM Policy Update
-        if: ${{ steps.construct_condition.outputs.updated_condition != steps.get_condition.outputs.current_condition }}
+        # This step will now always verify the IAM policy for the new_github_repo.
         run: |
           NEW_REPO_FULL_NAME="${{ github.event.inputs.new_github_repo }}"
           echo "Verifying IAM policy for service account ${{ env.GCP_SERVICE_ACCOUNT_NAME }}..."
