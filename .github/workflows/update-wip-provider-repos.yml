@@ -1,5 +1,4 @@
 name: Update GCP Workload Identity Provider Repos
-
 on:
   workflow_dispatch:
     inputs:
@@ -27,7 +26,6 @@ jobs:
     permissions:
       contents: 'read'
       id-token: 'write' # Required for Workload Identity Federation
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v3
@@ -46,7 +44,7 @@ jobs:
         with:
           workload_identity_provider: 'projects/${{ env.GCP_PROJECT_NUMBER }}/locations/${{ env.GCP_LOCATION }}/workloadIdentityPools/${{ env.WIP_POOL_ID }}/providers/${{ env.WIP_PROVIDER_ID }}'
           service_account: '${{ env.GCP_SERVICE_ACCOUNT_NAME }}@${{ env.PROJECT_ID }}.iam.gserviceaccount.com'
-          project_id: ${{ env.PROJECT_ID }} # <--- Added for robustness
+          project_id: ${{ env.PROJECT_ID }}
 
       - name: Get Current Provider Condition
         id: get_condition
@@ -89,13 +87,13 @@ jobs:
         if: ${{ steps.construct_condition.outputs.updated_condition != steps.get_condition.outputs.current_condition }}
         run: |
           gcloud iam workload-identity-pools providers update-oidc ${{ env.WIP_PROVIDER_ID }} \
-          --workload-identity-pool=${{ env.WIP_POOL_ID }} \
-          --project=${{ env.PROJECT_ID }} \
-          --location=${{ env.GCP_LOCATION }} \
-          --attribute-condition="${{ steps.construct_condition.outputs.updated_condition }}"
+            --workload-identity-pool=${{ env.WIP_POOL_ID }} \
+            --project=${{ env.PROJECT_ID }} \
+            --location=${{ env.GCP_LOCATION }} \
+            --attribute-condition="${{ steps.construct_condition.outputs.updated_condition }}"
         shell: bash
 
-      - name: Verify Update
+      - name: Verify Provider Update
         if: ${{ steps.construct_condition.outputs.updated_condition != steps.get_condition.outputs.current_condition }}
         run: |
           echo "Verifying updated provider configuration..."
@@ -105,3 +103,24 @@ jobs:
             --location=${{ env.GCP_LOCATION }} \
             --format="value(attributeCondition)"
         shell: bash
+
+      - name: Grant Workload Identity User Role to New Repository
+        # This step runs only if the attributeCondition was actually updated (meaning a new repo was added)
+        if: ${{ steps.construct_condition.outputs.updated_condition != steps.get_condition.outputs.current_condition }}
+        run: |
+          NEW_REPO_FULL_NAME="${{ github.event.inputs.new_github_repo }}"
+          echo "Granting Workload Identity User role for repository: $NEW_REPO_FULL_NAME"
+          gcloud iam service-accounts add-iam-policy-binding \
+            "${{ env.GCP_SERVICE_ACCOUNT_NAME }}@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --role="roles/iam.workloadIdentityUser" \
+            --member="principalSet://iam.googleapis.com/projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/${{ env.WIP_POOL_ID }}/attribute.repository/$NEW_REPO_FULL_NAME" \
+            --project="${{ env.PROJECT_ID }}"
+        shell: bash
+
+      - name: Verify Service Account IAM Policy Update
+        if: ${{ steps.construct_condition.outputs.updated_condition != steps.get_condition.outputs.current_condition }}
+        run: |
+          NEW_REPO_FULL_NAME="${{ github.event.inputs.new_github_repo }}"
+          echo "Verifying IAM policy for service account ${{ env.GCP_SERVICE_ACCOUNT_NAME }}..."
+          gcloud iam service-accounts get-iam-policy \
+            "${{ env.GCP_SERVICE
