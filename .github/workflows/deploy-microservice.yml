@@ -43,7 +43,7 @@ on:
         required: true
         type: string
 
-    secrets:
+    #secrets:
     # No secrets needed here if Workload Identity Federation is used,
     # as authentication happens via id-token.
     # This section is kept for illustration if secrets were ever needed.
