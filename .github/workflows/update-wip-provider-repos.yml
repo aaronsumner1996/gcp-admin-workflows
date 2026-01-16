@@ -123,4 +123,8 @@ jobs:
           NEW_REPO_FULL_NAME="${{ github.event.inputs.new_github_repo }}"
           echo "Verifying IAM policy for service account ${{ env.GCP_SERVICE_ACCOUNT_NAME }}..."
           gcloud iam service-accounts get-iam-policy \
-            "${{ env.GCP_SERVICE
+            "${{ env.GCP_SERVICE_ACCOUNT_NAME }}@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --project="${{ env.PROJECT_ID }}" \
+            --format="yaml" | grep -C 3 "attribute.repository/$NEW_REPO_FULL_NAME"
+          echo "IAM policy verification complete. Look for the new repository in the output above."
+        shell: bash
